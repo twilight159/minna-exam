@@ -26,9 +26,6 @@
   <!-- Dashboard -->
   <section id="dash" class="hidden">
     <div class="toolbar">
-      <label class="field" style="margin:0;min-width:200px">Class
-        <select id="classFilter" class="input"></select>
-      </label>
       <span class="grow"></span>
       <span class="muted small" id="updated"></span>
       <button class="btn small" id="refreshBtn">Refresh</button>
@@ -123,19 +120,11 @@
     $("dash").classList.remove("hidden");
     $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
 
-    const classes = Array.from(new Set(d.rows.map((r) => r.cls).filter(Boolean))).sort();
-    const sel = $("classFilter");
-    const prev = sel.value;
-    sel.innerHTML = `<option value="">All classes (${d.rows.length})</option>` +
-      classes.map((c) => `<option value="${esc(c)}">${esc(c)} (${d.rows.filter((r) => r.cls === c).length})</option>`).join("");
-    if (prev && classes.includes(prev)) sel.value = prev;
     draw();
   }
-  $("classFilter").addEventListener("change", draw);
 
   function rowsNow() {
-    const c = $("classFilter").value;
-    return DATA.rows.filter((r) => !c || r.cls === c);
+    return DATA.rows;
   }
 
   function isRight(r, n) { return r.answers && r.answers[n] === DATA.key[n]; }
@@ -341,18 +330,18 @@
   function drawStudents(rows) {
     const total = E.questions.length;
     const sorted = rows.slice().sort((a, b) => b.score - a.score || String(a.name).localeCompare(String(b.name)));
-    $("studentTable").innerHTML = `<thead><tr><th>Name</th><th>Class</th><th class="num">Score</th><th class="num">Time (min)</th><th>Questions wrong</th><th>Submitted</th></tr></thead><tbody>` +
+    $("studentTable").innerHTML = `<thead><tr><th>Name</th><th class="num">Score</th><th class="num">Time (min)</th><th>Questions wrong</th><th>Submitted</th></tr></thead><tbody>` +
       sorted.map((r) => {
         const wrong = E.questions.filter((q) => !isRight(r, q.n)).map((q) => q.n);
-        return `<tr><td>${esc(r.name)}</td><td>${esc(r.cls)}</td><td class="num">${r.score} / ${total}</td><td class="num">${esc(r.minutes)}${r.timeUp ? " ⏱" : ""}</td><td class="small">${wrong.join(", ") || "—"}</td><td class="small">${new Date(r.submittedAt).toLocaleString()}</td></tr>`;
+        return `<tr><td>${esc(r.name)}</td><td class="num">${r.score} / ${total}</td><td class="num">${esc(r.minutes)}${r.timeUp ? " ⏱" : ""}</td><td class="small">${wrong.join(", ") || "—"}</td><td class="small">${new Date(r.submittedAt).toLocaleString()}</td></tr>`;
       }).join("") + `</tbody>`;
   }
 
   // ---------- CSV ----------
   $("csvBtn").addEventListener("click", () => {
     const rows = rowsNow();
-    const head = ["Name", "Class", "Score", "Time (min)", "Submitted"].concat(E.questions.map((q) => "Q" + q.n));
-    const lines = [head].concat(rows.map((r) => [r.name, r.cls, r.score, r.minutes, r.submittedAt].concat(E.questions.map((q) => {
+    const head = ["Name", "Score", "Time (min)", "Submitted"].concat(E.questions.map((q) => "Q" + q.n));
+    const lines = [head].concat(rows.map((r) => [r.name, r.score, r.minutes, r.submittedAt].concat(E.questions.map((q) => {
       const a = (r.answers && r.answers[q.n]) || "";
       return a + (a && a === DATA.key[q.n] ? " ✓" : "");
     }))));

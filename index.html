@@ -41,9 +41,6 @@
       <label class="field">Your name
         <input id="nameInput" autocomplete="name" placeholder="e.g. Tan Wei Ming">
       </label>
-      <label class="field">Class
-        <input id="classInput" placeholder="e.g. Beginner 1A">
-      </label>
       <div id="startError" class="banner bad hidden"></div>
       <button class="btn primary" id="startBtn">Start the exam</button>
     </div>
@@ -253,7 +250,7 @@
   }
 
   function beginExam() {
-    $("whoLine").textContent = `${state.name} · ${state.cls}`;
+    $("whoLine").textContent = state.name;
     renderQuestions();
     show("examScreen");
     startTimer();
@@ -261,10 +258,9 @@
 
   $("startBtn").addEventListener("click", () => {
     const name = $("nameInput").value.trim();
-    const cls = $("classInput").value.trim();
     const err = $("startError");
-    if (!name || !cls) {
-      err.textContent = "Please enter your name and class.";
+    if (!name) {
+      err.textContent = "Please enter your name.";
       err.classList.remove("hidden");
       return;
     }
@@ -273,7 +269,7 @@
       err.classList.remove("hidden");
       return;
     }
-    state = { id: newId(), name, cls, start: Date.now(), answers: {}, status: "in-progress" };
+    state = { id: newId(), name, start: Date.now(), answers: {}, status: "in-progress" };
     save(state);
     beginExam();
   });
@@ -305,7 +301,7 @@
     $("doneCard").innerHTML = `<p>${timeUp ? "Time is up. " : ""}Sending your answers…</p>`;
 
     const payload = {
-      id: state.id, name: state.name, cls: state.cls,
+      id: state.id, name: state.name,
       startedAt: new Date(state.start).toISOString(),
       durationSec: Math.round((Math.min(state.end, state.start + E.minutes * 60000) - state.start) / 1000),
       timeUp: !!timeUp,
@@ -344,14 +340,14 @@
     const hasScore = typeof state.score === "number";
     $("doneCard").innerHTML = `<div class="banner good">Your answers have been submitted.</div>
       ${hasScore ? `<p class="muted">Your score</p><div class="bigscore">${state.score} / ${E.questions.length}</div>` : ""}
-      <p style="margin-top:12px">${state.name} · ${state.cls}</p>
+      <p style="margin-top:12px">${state.name}</p>
       <p class="muted small">Your teacher will go through the answers in class.</p>
       <p class="small" style="margin-top:16px"><a href="#" id="newStudent">Another student using this device? Start a new exam</a></p>`;
     $("newStudent").addEventListener("click", (ev) => {
       ev.preventDefault();
       try { localStorage.removeItem(STORE_KEY); } catch (e) {}
       mem = null; state = null;
-      $("nameInput").value = ""; $("classInput").value = "";
+      $("nameInput").value = "";
       show("startScreen");
     });
   }
