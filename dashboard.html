@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Exam Results</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap wide">
+  <h1>Exam Results — Minna no Nihongo I, Lessons 1–8</h1>
+  <p class="sub">Teacher view. Results come from your Google Sheet.</p>
+
+  <!-- Login -->
+  <section id="login" class="card" style="max-width:420px">
+    <label class="field">Teacher password
+      <input id="pw" type="password" autocomplete="current-password">
+    </label>
+    <div id="loginErr" class="banner bad hidden"></div>
+    <button class="btn primary" id="loginBtn">Show results</button>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="dash" class="hidden">
+    <div class="toolbar">
+      <label class="field" style="margin:0;min-width:200px">Class
+        <select id="classFilter" class="input"></select>
+      </label>
+      <span class="grow"></span>
+      <span class="muted small" id="updated"></span>
+      <button class="btn small" id="refreshBtn">Refresh</button>
+      <button class="btn small" id="csvBtn">Download CSV</button>
+    </div>
+
+    <div id="empty" class="banner warn hidden">No submissions yet. Results appear here as soon as students submit.</div>
+
+    <div id="content">
+      <div class="tiles" id="tiles"></div>
+
+      <h2>Explain these first — most missed questions</h2>
+      <p class="muted small">The questions the most students got wrong, with the most common wrong answer and a short explanation to go through in class.</p>
+      <div id="missList"></div>
+
+      <h2>% of students who got each question wrong</h2>
+      <div class="card">
+        <div class="chart" id="qChart"></div>
+        <div class="legend"><span><span class="sw" style="background:var(--series-1)"></span>Question</span><span><span class="sw" style="background:var(--series-2)"></span>Top 5 most missed</span></div>
+        <details>
+          <summary>Show as a table</summary>
+          <div class="tablewrap" style="margin-top:8px"><table class="data" id="qTable"></table></div>
+        </details>
+      </div>
+
+      <h2>Score distribution</h2>
+      <div class="card">
+        <div class="chart" id="histChart"></div>
+      </div>
+
+      <h2>Accuracy by lesson</h2>
+      <div class="card" id="lessonBars"></div>
+
+      <h2>Students</h2>
+      <div class="tablewrap"><table class="data" id="studentTable"></table></div>
+    </div>
+  </section>
+</div>
+<div class="tooltip" id="tip"></div>
+
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script>
+(function () {
+  const E = window.EXAM;
+  const QBY = {}; E.questions.forEach((q) => (QBY[q.n] = q));
+  const LETTERS = ["A", "B", "C", "D"];
+  const $ = (id) => document.getElementById(id);
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  let DATA = null;
+  let password = "";
+  try { password = sessionStorage.getItem("mnn-teacher") || ""; } catch (e) {}
+
+  // ---------- load ----------
+  async function fetchData() {
+    const url = window.APPS_SCRIPT_URL + "?key=" + encodeURIComponent(password) + "&t=" + Date.now();
+    const res = await fetch(url);
+    return res.json();
+  }
+
+  async function login() {
+    const err = $("loginErr");
+    err.classList.add("hidden");
+    if (!window.APPS_SCRIPT_URL || window.APPS_SCRIPT_URL.indexOf("http") !== 0) {
+      err.textContent = "The Apps Script URL is not set in config.js yet.";
+      err.classList.remove("hidden");
+      return;
+    }
+    $("loginBtn").disabled = true;
+    try {
+      const d = await fetchData();
+      if (!d.ok) throw new Error(d.error === "unauthorized" ? "Wrong password." : (d.error || "Could not load results."));
+      try { sessionStorage.setItem("mnn-teacher", password); } catch (e) {}
+      render(d);
+    } catch (e) {
+      err.textContent = e.message || "Could not load results. Check the Apps Script URL.";
+      err.classList.remove("hidden");
+      $("login").classList.remove("hidden");
+      $("dash").classList.add("hidden");
+    } finally {
+      $("loginBtn").disabled = false;
+    }
+  }
+  $("loginBtn").addEventListener("click", () => { password = $("pw").value; login(); });
+  $("pw").addEventListener("keydown", (e) => { if (e.key === "Enter") { password = $("pw").value; login(); } });
+  $("refreshBtn").addEventListener("click", login);
+
+  // ---------- render ----------
+  function render(d) {
+    DATA = d;
+    $("login").classList.add("hidden");
+    $("dash").classList.remove("hidden");
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+
+    const classes = Array.from(new Set(d.rows.map((r) => r.cls).filter(Boolean))).sort();
+    const sel = $("classFilter");
+    const prev = sel.value;
+    sel.innerHTML = `<option value="">All classes (${d.rows.length})</option>` +
+      classes.map((c) => `<option value="${esc(c)}">${esc(c)} (${d.rows.filter((r) => r.cls === c).length})</option>`).join("");
+    if (prev && classes.includes(prev)) sel.value = prev;
+    draw();
+  }
+  $("classFilter").addEventListener("change", draw);
+
+  function rowsNow() {
+    const c = $("classFilter").value;
+    return DATA.rows.filter((r) => !c || r.cls === c);
+  }
+
+  function isRight(r, n) { return r.answers && r.answers[n] === DATA.key[n]; }
+
+  function stats(rows) {
+    return E.questions.map((q) => {
+      const n = q.n;
+      let right = 0; const wrongCounts = {};
+      rows.forEach((r) => {
+        if (isRight(r, n)) right++;
+        else {
+          const a = (r.answers && r.answers[n]) || "(blank)";
+          wrongCounts[a] = (wrongCounts[a] || 0) + 1;
+        }
+      });
+      const wrong = rows.length - right;
+      let topWrong = null, topWrongN = 0;
+      Object.keys(wrongCounts).forEach((a) => { if (wrongCounts[a] > topWrongN) { topWrong = a; topWrongN = wrongCounts[a]; } });
+      return { n, q, right, wrong, pctWrong: rows.length ? wrong / rows.length : 0, topWrong, topWrongN };
+    });
+  }
+
+  function answerLabel(q, a) {
+    if (!a || a === "(blank)") return "(no answer)";
+    if (q.part === "C") return a.split("").join(" → ");
+    const i = LETTERS.indexOf(a);
+    return i >= 0 ? `${a}. ${furigana(q.options[i][0])}` : esc(a);
+  }
+
+  function draw() {
+    const rows = rowsNow();
+    const has = rows.length > 0;
+    $("empty").classList.toggle("hidden", has);
+    $("content").classList.toggle("hidden", !has);
+    if (!has) return;
+
+    const total = E.questions.length;
+    const scores = rows.map((r) => r.score);
+    const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const mins = rows.map((r) => Number(r.minutes) || 0);
+    const avgMin = mins.reduce((a, b) => a + b, 0) / mins.length;
+    const pass = rows.filter((r) => r.score / total >= 0.6).length;
+
+    $("tiles").innerHTML = [
+      ["Students", rows.length, ""],
+      ["Average score", avg.toFixed(1) + " / " + total, Math.round((avg / total) * 100) + "%"],
+      ["Highest", Math.max(...scores) + " / " + total, ""],
+      ["Lowest", Math.min(...scores) + " / " + total, ""],
+      ["Scored 60% or more", pass, Math.round((pass / rows.length) * 100) + "% of students"],
+      ["Average time", avgMin.toFixed(0) + " min", rows.filter((r) => r.timeUp).length + " ran out of time"]
+    ].map(([k, v, s]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+
+    const st = stats(rows);
+    const ranked = st.filter((s) => s.wrong > 0).sort((a, b) => b.pctWrong - a.pctWrong || a.n - b.n);
+    const top = ranked.slice(0, 5);
+    const topSet = new Set(top.map((s) => s.n));
+
+    drawMissList(top, rows.length);
+    drawQChart(st, topSet);
+    drawQTable(st);
+    drawHist(scores, total);
+    drawLessons(rows);
+    drawStudents(rows);
+  }
+
+  // ---------- most missed ----------
+  function drawMissList(top, nStudents) {
+    if (!top.length) {
+      $("missList").innerHTML = `<div class="banner good">Everyone answered every question correctly.</div>`;
+      return;
+    }
+    $("missList").innerHTML = top.map((s, i) => {
+      const q = s.q;
+      const ex = DATA.explain[s.n] || ["", ""];
+      const key = DATA.key[s.n];
+      let body = "";
+      if (q.part === "C") {
+        const sentence = key.split("").map((L) => furigana(q.chunks[LETTERS.indexOf(L)][0])).join(" ");
+        body = `<div class="hint">(${esc(q.en)})</div>
+          <div class="small" style="margin-top:6px">${q.chunks.map((c, j) => `<strong>${LETTERS[j]}.</strong> ${furigana(c[0])}`).join("　")}</div>
+          <div style="margin-top:8px"><span class="pill good">Correct</span>${key.split("").join(" → ")}　<span class="qtext">${sentence}</span></div>`;
+      } else {
+        body = `<div class="qtext">${furigana(q.q)}</div>
+          <div class="small">${q.options.map((o, j) => `<strong>${LETTERS[j]}.</strong> ${furigana(o[0])}`).join("　")}</div>
+          <div style="margin-top:8px"><span class="pill good">Correct</span>${answerLabel(q, key)}</div>`;
+      }
+      const wrongLine = s.topWrong
+        ? `<div style="margin-top:6px"><span class="pill bad">Most common wrong answer</span>${answerLabel(q, s.topWrong)} <span class="muted small">(${s.topWrongN} student${s.topWrongN > 1 ? "s" : ""})</span></div>`
+        : "";
+      return `<div class="card miss">
+        <div class="top">
+          <div><strong>#${i + 1} · Question ${s.n}</strong> <span class="pill neutral">Lesson ${q.lesson}</span><span class="pill neutral">${esc(ex[0])}</span></div>
+          <div><span class="rate">${Math.round(s.pctWrong * 100)}%</span> <span class="muted small">wrong (${s.wrong} of ${nStudents})</span></div>
+        </div>
+        ${body}
+        ${wrongLine}
+        <div class="expl"><strong>Explain:</strong> ${furigana(ex[1])}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // ---------- charts ----------
+  const tip = $("tip");
+  function showTip(evt, html) {
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    const pad = 12;
+    let x = evt.pageX + pad, y = evt.pageY + pad;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    if (x + w > window.scrollX + window.innerWidth - 8) x = evt.pageX - w - pad;
+    if (y + h > window.scrollY + window.innerHeight - 8) y = evt.pageY - h - pad;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  }
+  function hideTip() { tip.style.display = "none"; }
+
+  function drawQChart(st, topSet) {
+    const W = 1000, H = 300, m = { t: 16, r: 10, b: 46, l: 40 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const n = st.length, band = iw / n, bw = Math.max(4, band - 4);
+    const y = (v) => m.t + ih - v * ih;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Percent of students who got each question wrong">`;
+    s += `<g class="grid">`;
+    [0, 0.25, 0.5, 0.75, 1].forEach((v) => {
+      s += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"></line><text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end">${v * 100}%</text>`;
+    });
+    s += `</g>`;
+    st.forEach((d, i) => {
+      const x = m.l + i * band + (band - bw) / 2;
+      const h = Math.max(d.pctWrong > 0 ? 2 : 0, d.pctWrong * ih);
+      const r = Math.min(4, bw / 2, h);
+      const yTop = m.t + ih - h;
+      // bar with rounded top, flat base
+      if (h > 0) {
+        s += `<path class="bar${topSet.has(d.n) ? " hot" : ""}" d="M${x},${m.t + ih} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + bw - r} Q${x + bw},${yTop} ${x + bw},${yTop + r} V${m.t + ih} Z"></path>`;
+      }
+      const stagger = topSet.has(d.n) && i > 0 && topSet.has(st[i - 1].n) && Math.abs(st[i - 1].pctWrong - d.pctWrong) < 0.08 ? 13 : 0;
+      if (topSet.has(d.n)) s += `<text x="${x + bw / 2}" y="${yTop - 4 - stagger}" text-anchor="middle" style="font-weight:600;fill:var(--text)">${Math.round(d.pctWrong * 100)}%</text>`;
+      s += `<rect class="hit" data-i="${i}" x="${m.l + i * band}" y="${m.t}" width="${band}" height="${ih}"></rect>`;
+      if (d.n % 5 === 0 || d.n === 1) s += `<text x="${x + bw / 2}" y="${m.t + ih + 14}" text-anchor="middle">${d.n}</text>`;
+    });
+    // part labels
+    [["A", 1, 15], ["B", 16, 30], ["C", 31, 40]].forEach(([p, a, b]) => {
+      const x1 = m.l + (a - 1) * band + 2, x2 = m.l + b * band - 2;
+      s += `<line x1="${x1}" x2="${x2}" y1="${H - 18}" y2="${H - 18}" style="stroke:var(--border)"></line>`;
+      s += `<text x="${(x1 + x2) / 2}" y="${H - 4}" text-anchor="middle">Part ${p}</text>`;
+    });
+    s += `<line x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}" style="stroke:var(--text-2)"></line>`;
+    s += `</svg>`;
+    const el = $("qChart");
+    el.innerHTML = s;
+    el.querySelectorAll(".hit").forEach((h) => {
+      const d = st[+h.dataset.i];
+      const label = d.q.part === "C" ? esc(d.q.en) : furigana(d.q.q);
+      h.addEventListener("mousemove", (e) => showTip(e, `<strong>Q${d.n}</strong> · Lesson ${d.q.lesson}<br>${label}<br><strong>${Math.round(d.pctWrong * 100)}% wrong</strong> (${d.wrong} students)`));
+      h.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  function drawQTable(st) {
+    $("qTable").innerHTML = `<thead><tr><th class="num">Q</th><th>Lesson</th><th>Grammar point</th><th>Correct</th><th class="num">% wrong</th><th>Most common wrong answer</th></tr></thead><tbody>` +
+      st.map((d) => `<tr><td class="num">${d.n}</td><td>${d.q.lesson}</td><td>${esc((DATA.explain[d.n] || [""])[0])}</td><td>${answerLabel(d.q, DATA.key[d.n])}</td><td class="num">${Math.round(d.pctWrong * 100)}%</td><td>${d.topWrong ? answerLabel(d.q, d.topWrong) + ` (${d.topWrongN})` : "—"}</td></tr>`).join("") +
+      `</tbody>`;
+  }
+
+  function drawHist(scores, total) {
+    const bins = [];
+    for (let a = 0; a < total; a += 5) bins.push({ a, b: Math.min(a + 4, total), c: 0 });
+    bins[bins.length - 1].b = total;
+    scores.forEach((sc) => { const i = Math.min(bins.length - 1, Math.floor(sc / 5)); bins[i].c++; });
+    const max = Math.max(1, ...bins.map((b) => b.c));
+    const W = 1000, H = 240, m = { t: 20, r: 10, b: 40, l: 40 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b, band = iw / bins.length, bw = band - 8;
+    const step = max <= 5 ? 1 : Math.ceil(max / 5);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Number of students in each score range"><g class="grid">`;
+    for (let v = 0; v <= max; v += step) {
+      const yy = m.t + ih - (v / max) * ih;
+      s += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}"></line><text x="${m.l - 6}" y="${yy + 4}" text-anchor="end">${v}</text>`;
+    }
+    s += `</g>`;
+    bins.forEach((b, i) => {
+      const x = m.l + i * band + 4, h = (b.c / max) * ih, yTop = m.t + ih - h, r = Math.min(4, h);
+      if (h > 0) s += `<path class="bar" d="M${x},${m.t + ih} V${yTop + r} Q${x},${yTop} ${x + r},${yTop} H${x + bw - r} Q${x + bw},${yTop} ${x + bw},${yTop + r} V${m.t + ih} Z"></path>`;
+      if (b.c) s += `<text x="${x + bw / 2}" y="${yTop - 5}" text-anchor="middle" style="fill:var(--text);font-weight:600">${b.c}</text>`;
+      s += `<text x="${x + bw / 2}" y="${m.t + ih + 16}" text-anchor="middle">${b.a}–${b.b}</text>`;
+    });
+    s += `<text x="${m.l + iw / 2}" y="${H - 4}" text-anchor="middle">Score (out of ${total})</text>`;
+    s += `<line x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}" style="stroke:var(--text-2)"></line></svg>`;
+    $("histChart").innerHTML = s;
+  }
+
+  function drawLessons(rows) {
+    let html = "";
+    for (let L = 1; L <= 8; L++) {
+      const qs = E.questions.filter((q) => q.lesson === L);
+      let right = 0, tot = 0;
+      rows.forEach((r) => qs.forEach((q) => { tot++; if (isRight(r, q.n)) right++; }));
+      const pct = tot ? right / tot : 0;
+      html += `<div class="lessonbar"><span>Lesson ${L} <span class="muted small">(${qs.length}q)</span></span><div class="track"><div class="fill" style="width:${(pct * 100).toFixed(1)}%"></div></div><span class="pct">${Math.round(pct * 100)}%</span></div>`;
+    }
+    $("lessonBars").innerHTML = html + `<p class="muted small" style="margin:8px 0 0">% of answers correct for each lesson's questions.</p>`;
+  }
+
+  function drawStudents(rows) {
+    const total = E.questions.length;
+    const sorted = rows.slice().sort((a, b) => b.score - a.score || String(a.name).localeCompare(String(b.name)));
+    $("studentTable").innerHTML = `<thead><tr><th>Name</th><th>Class</th><th class="num">Score</th><th class="num">Time (min)</th><th>Questions wrong</th><th>Submitted</th></tr></thead><tbody>` +
+      sorted.map((r) => {
+        const wrong = E.questions.filter((q) => !isRight(r, q.n)).map((q) => q.n);
+        return `<tr><td>${esc(r.name)}</td><td>${esc(r.cls)}</td><td class="num">${r.score} / ${total}</td><td class="num">${esc(r.minutes)}${r.timeUp ? " ⏱" : ""}</td><td class="small">${wrong.join(", ") || "—"}</td><td class="small">${new Date(r.submittedAt).toLocaleString()}</td></tr>`;
+      }).join("") + `</tbody>`;
+  }
+
+  // ---------- CSV ----------
+  $("csvBtn").addEventListener("click", () => {
+    const rows = rowsNow();
+    const head = ["Name", "Class", "Score", "Time (min)", "Submitted"].concat(E.questions.map((q) => "Q" + q.n));
+    const lines = [head].concat(rows.map((r) => [r.name, r.cls, r.score, r.minutes, r.submittedAt].concat(E.questions.map((q) => {
+      const a = (r.answers && r.answers[q.n]) || "";
+      return a + (a && a === DATA.key[q.n] ? " ✓" : "");
+    }))));
+    const csv = "﻿" + lines.map((l) => l.map((v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = "exam-results.csv";
+    a.click();
+  });
+
+  // For local testing only.
+  window.__renderDashboard = render;
+
+  if (password) login();
+})();
+</script>
+</body>
+</html>

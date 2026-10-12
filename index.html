@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minna no Nihongo Exam</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Timer bar (shown during the exam) -->
+<div class="timerbar hidden" id="timerbar">
+  <div class="inner">
+    <span>Time left: <span class="timer" id="timer">60:00</span></span>
+    <span class="progress" id="progress">0 / 40 answered</span>
+    <span class="spacer"></span>
+    <button class="btn primary small" id="submitTop">Submit</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- Start screen -->
+  <section id="startScreen">
+    <h1 id="examTitle">Minna no Nihongo I — Lessons 1–8 Exam</h1>
+    <p class="sub">40 questions · 60 minutes · 1 mark each</p>
+
+    <div class="card">
+      <p><strong>Before you start</strong></p>
+      <ul>
+        <li>You have <strong>60 minutes</strong>. The timer starts when you press Start and keeps running even if you close the page.</li>
+        <li>When the time is up, your answers are submitted automatically.</li>
+        <li>You can submit only once.</li>
+        <li>Kanji readings are shown above the kanji. Romaji is shown in <em>italics</em> to help you.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <label class="field">Your name
+        <input id="nameInput" autocomplete="name" placeholder="e.g. Tan Wei Ming">
+      </label>
+      <label class="field">Class
+        <input id="classInput" placeholder="e.g. Beginner 1A">
+      </label>
+      <div id="startError" class="banner bad hidden"></div>
+      <button class="btn primary" id="startBtn">Start the exam</button>
+    </div>
+  </section>
+
+  <!-- Exam -->
+  <section id="examScreen" class="hidden">
+    <h1>Minna no Nihongo I — Lessons 1–8</h1>
+    <p class="sub" id="whoLine"></p>
+    <div id="questions"></div>
+    <div class="submitbox">
+      <button class="btn primary" id="submitBottom">Submit my answers</button>
+    </div>
+  </section>
+
+  <!-- Result -->
+  <section id="doneScreen" class="hidden">
+    <h1>Thank you!</h1>
+    <div class="card" id="doneCard"></div>
+  </section>
+</div>
+
+<!-- Confirm modal -->
+<div class="modal-backdrop" id="confirmModal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+  <div class="modal">
+    <h2 id="confirmTitle" style="margin-top:0">Submit your answers?</h2>
+    <p id="confirmText"></p>
+    <div class="actions">
+      <button class="btn" id="confirmNo">Keep working</button>
+      <button class="btn primary" id="confirmYes">Submit</button>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="questions.js"></script>
+<script>
+(function () {
+  const E = window.EXAM;
+  const LETTERS = ["A", "B", "C", "D"];
+  const STORE_KEY = "mnn-exam-l1-8";
+  const $ = (id) => document.getElementById(id);
+
+  // ---- storage (works even if localStorage is blocked) ----
+  let mem = null;
+  function load() {
+    try { const s = localStorage.getItem(STORE_KEY); if (s) return JSON.parse(s); } catch (e) {}
+    return mem;
+  }
+  function save(st) {
+    mem = st;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(st)); } catch (e) {}
+  }
+
+  let state = load();
+  let tick = null;
+
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  // ---- render questions ----
+  function renderQuestions() {
+    const box = $("questions");
+    box.innerHTML = "";
+    E.parts.forEach((p) => {
+      const h = document.createElement("h2");
+      h.className = "part-title";
+      h.textContent = p.title;
+      box.appendChild(h);
+      const note = document.createElement("p");
+      note.className = "muted small";
+      note.textContent = p.note;
+      box.appendChild(note);
+
+      E.questions.filter((q) => q.part === p.id).forEach((q) => {
+        box.appendChild(q.part === "C" ? renderOrder(q) : renderMCQ(q));
+      });
+    });
+    updateProgress();
+  }
+
+  function renderMCQ(q) {
+    const card = document.createElement("div");
+    card.className = "card q";
+    card.id = "q" + q.n;
+    let html = `<div class="qhead"><span class="num">${q.n}.</span><div>
+      <div class="qtext">${furigana(q.q)}</div>
+      ${q.romaji ? `<div class="romaji">(${furigana(q.romaji)})</div>` : ""}
+      ${q.hint ? `<div class="hint">${furigana(q.hint)}</div>` : ""}
+    </div></div><div class="opts" role="radiogroup" aria-label="Question ${q.n}">`;
+    q.options.forEach((o, i) => {
+      const L = LETTERS[i];
+      const checked = state.answers[q.n] === L;
+      html += `<label class="opt${checked ? " selected" : ""}">
+        <input type="radio" name="q${q.n}" value="${L}" ${checked ? "checked" : ""}>
+        <span><span class="letter">${L}.</span> ${furigana(o[0])}${o[1] ? `<span class="ro">${furigana(o[1])}</span>` : ""}</span>
+      </label>`;
+    });
+    html += "</div>";
+    card.innerHTML = html;
+    card.querySelectorAll("input").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        state.answers[q.n] = inp.value;
+        save(state);
+        card.querySelectorAll(".opt").forEach((l) => l.classList.toggle("selected", l.querySelector("input").checked));
+        updateProgress();
+      });
+    });
+    return card;
+  }
+
+  function renderOrder(q) {
+    const card = document.createElement("div");
+    card.className = "card q";
+    card.id = "q" + q.n;
+    card.innerHTML = `<div class="qhead"><span class="num">${q.n}.</span><div>
+      <div class="hint">(${q.en})</div>
+      <div class="chunks"></div>
+      <div class="slots"></div>
+      <div class="built"></div>
+      <button class="btn small" type="button" data-reset>Reset</button>
+    </div></div>`;
+    const chunksEl = card.querySelector(".chunks");
+    const slotsEl = card.querySelector(".slots");
+    const builtEl = card.querySelector(".built");
+
+    function current() { return (state.answers[q.n] || "").split("").filter(Boolean); }
+
+    function draw() {
+      const order = current();
+      chunksEl.innerHTML = "";
+      q.chunks.forEach((c, i) => {
+        const L = LETTERS[i];
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chunk";
+        b.disabled = order.includes(L);
+        b.innerHTML = `<span class="letter">${L}.</span>${furigana(c[0])}<span class="ro">${furigana(c[1])}</span>`;
+        b.addEventListener("click", () => {
+          const o = current();
+          if (o.length >= 4 || o.includes(L)) return;
+          o.push(L);
+          state.answers[q.n] = o.join("");
+          save(state);
+          draw();
+          updateProgress();
+        });
+        chunksEl.appendChild(b);
+      });
+      slotsEl.innerHTML = "";
+      for (let i = 0; i < 4; i++) {
+        if (i) { const a = document.createElement("span"); a.className = "arrow"; a.textContent = "→"; slotsEl.appendChild(a); }
+        const s = document.createElement("span");
+        s.className = "slot" + (order[i] ? " filled" : "");
+        s.textContent = order[i] || "";
+        slotsEl.appendChild(s);
+      }
+      builtEl.innerHTML = order.map((L) => furigana(q.chunks[LETTERS.indexOf(L)][0])).join(" ");
+    }
+    card.querySelector("[data-reset]").addEventListener("click", () => {
+      delete state.answers[q.n];
+      save(state);
+      draw();
+      updateProgress();
+    });
+    draw();
+    return card;
+  }
+
+  function answeredCount() {
+    return E.questions.filter((q) => {
+      const a = state.answers[q.n];
+      return q.part === "C" ? a && a.length === 4 : !!a;
+    }).length;
+  }
+
+  function updateProgress() {
+    $("progress").textContent = `${answeredCount()} / ${E.questions.length} answered`;
+  }
+
+  // ---- timer ----
+  function remainingMs() {
+    return state.start + E.minutes * 60000 - Date.now();
+  }
+  function fmt(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  }
+  function startTimer() {
+    const t = $("timer");
+    const step = () => {
+      const r = remainingMs();
+      t.textContent = fmt(r);
+      t.classList.toggle("low", r <= 5 * 60000);
+      if (r <= 0) { clearInterval(tick); submit(true); }
+    };
+    step();
+    tick = setInterval(step, 1000);
+  }
+
+  // ---- screens ----
+  function show(id) {
+    ["startScreen", "examScreen", "doneScreen"].forEach((s) => $(s).classList.toggle("hidden", s !== id));
+    $("timerbar").classList.toggle("hidden", id !== "examScreen");
+    window.scrollTo(0, 0);
+  }
+
+  function beginExam() {
+    $("whoLine").textContent = `${state.name} · ${state.cls}`;
+    renderQuestions();
+    show("examScreen");
+    startTimer();
+  }
+
+  $("startBtn").addEventListener("click", () => {
+    const name = $("nameInput").value.trim();
+    const cls = $("classInput").value.trim();
+    const err = $("startError");
+    if (!name || !cls) {
+      err.textContent = "Please enter your name and class.";
+      err.classList.remove("hidden");
+      return;
+    }
+    if (!window.APPS_SCRIPT_URL || window.APPS_SCRIPT_URL.indexOf("http") !== 0) {
+      err.textContent = "This exam is not set up yet. Please tell your teacher (the results link is missing).";
+      err.classList.remove("hidden");
+      return;
+    }
+    state = { id: newId(), name, cls, start: Date.now(), answers: {}, status: "in-progress" };
+    save(state);
+    beginExam();
+  });
+
+  // ---- submit ----
+  function askSubmit() {
+    const left = E.questions.length - answeredCount();
+    $("confirmText").textContent = left > 0
+      ? `You have ${left} unanswered question${left > 1 ? "s" : ""}. You can't change your answers after submitting.`
+      : "You can't change your answers after submitting.";
+    $("confirmModal").classList.add("open");
+    $("confirmYes").focus();
+  }
+  $("submitTop").addEventListener("click", askSubmit);
+  $("submitBottom").addEventListener("click", askSubmit);
+  $("confirmNo").addEventListener("click", () => $("confirmModal").classList.remove("open"));
+  $("confirmYes").addEventListener("click", () => { $("confirmModal").classList.remove("open"); submit(false); });
+
+  let sending = false;
+  async function submit(timeUp) {
+    if (sending || state.status === "submitted") return;
+    sending = true;
+    clearInterval(tick);
+    state.status = "sending";
+    state.end = state.end || Date.now();
+    state.timeUp = !!timeUp;
+    save(state);
+    show("doneScreen");
+    $("doneCard").innerHTML = `<p>${timeUp ? "Time is up. " : ""}Sending your answers…</p>`;
+
+    const payload = {
+      id: state.id, name: state.name, cls: state.cls,
+      startedAt: new Date(state.start).toISOString(),
+      durationSec: Math.round((Math.min(state.end, state.start + E.minutes * 60000) - state.start) / 1000),
+      timeUp: !!timeUp,
+      answers: state.answers
+    };
+    const body = JSON.stringify(payload);
+    let result = null;
+    try {
+      const res = await fetch(window.APPS_SCRIPT_URL, { method: "POST", body });
+      result = await res.json();
+    } catch (e) {
+      // Some browsers block reading the reply; send again without reading it.
+      // The script ignores duplicates (same id), so this is safe.
+      try {
+        await fetch(window.APPS_SCRIPT_URL, { method: "POST", body, mode: "no-cors" });
+        result = { ok: true, noScore: true };
+      } catch (e2) { result = null; }
+    }
+    sending = false;
+
+    if (result && result.ok) {
+      state.status = "submitted";
+      state.score = result.score;
+      save(state);
+      showDone();
+    } else {
+      state.status = "failed";
+      save(state);
+      $("doneCard").innerHTML = `<div class="banner bad">Your answers could not be sent. Check your internet connection and try again. Your answers are saved on this device.</div>
+        <button class="btn primary" id="retryBtn">Try again</button>`;
+      $("retryBtn").addEventListener("click", () => { state.status = "sending"; submit(state.timeUp); });
+    }
+  }
+
+  function showDone() {
+    const hasScore = typeof state.score === "number";
+    $("doneCard").innerHTML = `<div class="banner good">Your answers have been submitted.</div>
+      ${hasScore ? `<p class="muted">Your score</p><div class="bigscore">${state.score} / ${E.questions.length}</div>` : ""}
+      <p style="margin-top:12px">${state.name} · ${state.cls}</p>
+      <p class="muted small">Your teacher will go through the answers in class.</p>
+      <p class="small" style="margin-top:16px"><a href="#" id="newStudent">Another student using this device? Start a new exam</a></p>`;
+    $("newStudent").addEventListener("click", (ev) => {
+      ev.preventDefault();
+      try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+      mem = null; state = null;
+      $("nameInput").value = ""; $("classInput").value = "";
+      show("startScreen");
+    });
+  }
+
+  // ---- resume after refresh ----
+  if (state && state.status === "submitted") {
+    show("doneScreen"); showDone();
+  } else if (state && (state.status === "sending" || state.status === "failed")) {
+    submit(state.timeUp);
+  } else if (state && state.status === "in-progress") {
+    if (remainingMs() <= 0) { state.end = state.start + E.minutes * 60000; save(state); submit(true); }
+    else beginExam();
+  }
+})();
+</script>
+</body>
+</html>
