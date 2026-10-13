@@ -30,6 +30,7 @@
       <span class="muted small" id="updated"></span>
       <button class="btn small" id="refreshBtn">Refresh</button>
       <button class="btn small" id="csvBtn">Download CSV</button>
+      <button class="btn small primary" id="allPdfBtn">Download all result PDFs</button>
     </div>
 
     <div id="empty" class="banner warn hidden">No submissions yet. Results appear here as soon as students submit.</div>
@@ -37,8 +38,11 @@
     <div id="content">
       <div class="tiles" id="tiles"></div>
 
-      <h2>Explain these first — most missed questions</h2>
-      <p class="muted small">The questions the most students got wrong, with the most common wrong answer and a short explanation to go through in class.</p>
+      <h2>All questions — most missed first</h2>
+      <p class="muted small">Every question, sorted from most to least wrong, with the most common wrong answer and an explanation to go through in class. The 5 most missed are marked in orange.</p>
+      <div class="misstools">
+        <label class="small"><input type="checkbox" id="onlyWrong"> Only show questions someone got wrong</label>
+      </div>
       <div id="missList"></div>
 
       <h2>% of students who got each question wrong</h2>
@@ -68,6 +72,8 @@
 
 <script src="config.js"></script>
 <script src="questions.js"></script>
+<script src="vendor/html2pdf.bundle.min.js"></script>
+<script src="receipt.js"></script>
 <script>
 (function () {
   const E = window.EXAM;
@@ -181,8 +187,9 @@
     const ranked = st.filter((s) => s.wrong > 0).sort((a, b) => b.pctWrong - a.pctWrong || a.n - b.n);
     const top = ranked.slice(0, 5);
     const topSet = new Set(top.map((s) => s.n));
+    const all = st.slice().sort((a, b) => b.pctWrong - a.pctWrong || a.n - b.n);
 
-    drawMissList(top, rows.length);
+    drawMissList(all, topSet, rows.length);
     drawQChart(st, topSet);
     drawQTable(st);
     drawHist(scores, total);
@@ -191,12 +198,14 @@
   }
 
   // ---------- most missed ----------
-  function drawMissList(top, nStudents) {
-    if (!top.length) {
+  function drawMissList(all, topSet, nStudents) {
+    const onlyWrong = $("onlyWrong").checked;
+    const list = onlyWrong ? all.filter((s) => s.wrong > 0) : all;
+    if (!list.length) {
       $("missList").innerHTML = `<div class="banner good">Everyone answered every question correctly.</div>`;
       return;
     }
-    $("missList").innerHTML = top.map((s, i) => {
+    $("missList").innerHTML = list.map((s, i) => {
       const q = s.q;
       const ex = DATA.explain[s.n] || ["", ""];
       const key = DATA.key[s.n];
@@ -214,10 +223,11 @@
       const wrongLine = s.topWrong
         ? `<div style="margin-top:6px"><span class="pill bad">Most common wrong answer</span>${answerLabel(q, s.topWrong)} <span class="muted small">(${s.topWrongN} student${s.topWrongN > 1 ? "s" : ""})</span></div>`
         : "";
-      return `<div class="card miss">
+      const cls = topSet.has(s.n) ? "miss" : s.wrong > 0 ? "miss cool" : "miss zero";
+      return `<div class="card ${cls}">
         <div class="top">
           <div><strong>#${i + 1} · Question ${s.n}</strong> <span class="pill neutral">Lesson ${q.lesson}</span><span class="pill neutral">${esc(ex[0])}</span></div>
-          <div><span class="rate">${Math.round(s.pctWrong * 100)}%</span> <span class="muted small">wrong (${s.wrong} of ${nStudents})</span></div>
+          <div>${s.wrong > 0 ? `<span class="rate">${Math.round(s.pctWrong * 100)}%</span> <span class="muted small">wrong (${s.wrong} of ${nStudents})</span>` : `<span class="pill good">Everyone got this right</span>`}</div>
         </div>
         ${body}
         ${wrongLine}
@@ -330,12 +340,42 @@
   function drawStudents(rows) {
     const total = E.questions.length;
     const sorted = rows.slice().sort((a, b) => b.score - a.score || String(a.name).localeCompare(String(b.name)));
-    $("studentTable").innerHTML = `<thead><tr><th>Name</th><th class="num">Score</th><th class="num">Time (min)</th><th>Questions wrong</th><th>Submitted</th></tr></thead><tbody>` +
+    $("studentTable").innerHTML = `<thead><tr><th>Name</th><th class="num">Score</th><th class="num">Time (min)</th><th>Questions wrong</th><th>Submitted</th><th>Result</th></tr></thead><tbody>` +
       sorted.map((r) => {
         const wrong = E.questions.filter((q) => !isRight(r, q.n)).map((q) => q.n);
-        return `<tr><td>${esc(r.name)}</td><td class="num">${r.score} / ${total}</td><td class="num">${esc(r.minutes)}${r.timeUp ? " ⏱" : ""}</td><td class="small">${wrong.join(", ") || "—"}</td><td class="small">${new Date(r.submittedAt).toLocaleString()}</td></tr>`;
+        return `<tr><td>${esc(r.name)}</td><td class="num">${r.score} / ${total}</td><td class="num">${esc(r.minutes)}${r.timeUp ? " ⏱" : ""}</td><td class="small">${wrong.join(", ") || "—"}</td><td class="small">${new Date(r.submittedAt).toLocaleString()}</td><td><button class="btn tiny" data-pdf="${esc(r.id)}">PDF</button></td></tr>`;
       }).join("") + `</tbody>`;
+    $("studentTable").querySelectorAll("[data-pdf]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        const r = DATA.rows.find((x) => String(x.id) === b.dataset.pdf);
+        if (!r) return;
+        b.disabled = true; b.textContent = "…";
+        await Receipt.download(receiptData(r));
+        b.disabled = false; b.textContent = "PDF";
+      });
+    });
   }
+
+  function receiptData(r) {
+    return { name: r.name, submittedAt: r.submittedAt, answers: r.answers || {}, minutes: r.minutes,
+      key: DATA.key, explain: DATA.explain };
+  }
+
+  $("onlyWrong").addEventListener("change", draw);
+
+  $("allPdfBtn").addEventListener("click", async () => {
+    const rows = rowsNow().slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!rows.length) return;
+    const b = $("allPdfBtn");
+    b.disabled = true;
+    for (let i = 0; i < rows.length; i++) {
+      b.textContent = `Making PDF ${i + 1} of ${rows.length}…`;
+      await Receipt.download(receiptData(rows[i]));
+      await new Promise((res) => setTimeout(res, 400));
+    }
+    b.textContent = "Download all result PDFs";
+    b.disabled = false;
+  });
 
   // ---------- CSV ----------
   $("csvBtn").addEventListener("click", () => {

@@ -48,17 +48,18 @@ The **answer key is never in this repository**. It lives only in the Apps Script
    - **Parts A and B:** tap one answer.
    - **Part C:** tap the four parts in the order that makes a correct sentence. Tap **Reset** to try again.
 4. Press **Submit** when you're done. If time runs out, your answers are submitted automatically.
-5. You'll see your score. You can only submit once.
+5. You'll see your score and a review of every question. Press **Download my results (PDF)** to keep a copy. For each question you got wrong, it shows the correct answer and an explanation. You can only submit once.
 
 ## For the teacher: the results dashboard
 
 Open the dashboard link and enter your teacher password. You'll see:
 
 - **Summary:** number of students, average, highest and lowest score, how many scored 60% or more, and average time taken
-- **Explain these first:** the 5 most-missed questions, each with the correct answer, the wrong answer most students picked, and a short grammar explanation to use in class
+- **All questions, most missed first:** every question with its % wrong, the correct answer, the wrong answer most students picked, and a short grammar explanation to use in class (the top 5 are marked in orange; tick *Only show questions someone got wrong* to hide the rest)
 - **% wrong for every question**, as a chart (hover a bar for details) and a table
 - **Score distribution** and **accuracy by lesson**, so you can see which lessons need review
-- **Student list:** each student's score, time taken, and which questions they got wrong
+- **Student list:** each student's score, time taken, and which questions they got wrong, with a **PDF** button to download that student's result sheet
+- **Download all result PDFs:** one result PDF per student, to share or print. Your browser may ask once to allow multiple downloads.
 - **Download CSV** to open the results in Excel or Google Sheets
 
 Press **Refresh** to load new submissions. Every submission is also a row in your Google Sheet.
@@ -73,10 +74,11 @@ You need two things: `Code.gs` (sent separately, **do not upload it to GitHub**)
 1. Go to [sheets.new](https://sheets.new) to create a blank sheet. Name it, for example, *Minna Exam Results*.
 2. Click **Extensions → Apps Script**.
 3. Delete the sample code, paste in everything from `Code.gs`, and click **Save** 💾.
-4. On the first line of code, change the password:
+4. At the top of the code, change the password:
    ```js
    const TEACHER_PASSWORD = 'change-this-password';
    ```
+   Below it, `SHOW_REVIEW_TO_STUDENTS = true` lets students see and download their corrections right after submitting. Set it to `false` if you'd rather share the result PDFs yourself after everyone has finished.
 
 ### Step 2: Publish the script as a web app
 1. Click **Deploy → New deployment**.
@@ -104,6 +106,7 @@ You need two things: `Code.gs` (sent separately, **do not upload it to GitHub**)
 ---
 
 ## Exam day tips
+- If `SHOW_REVIEW_TO_STUDENTS` is `true`, students who finish early see the correct answers for their own wrong questions. If some students are still taking the exam, keep it `false`. After everyone has finished, use **Download all result PDFs** on the dashboard.
 - Share only the **exam link** with students, not the dashboard link.
 - **Shared computers:** after a student submits, the next student taps *"Another student using this device? Start a new exam"* on the finish screen.
 - Students must stay online to submit. If the internet drops, their answers are kept on the device, and a **Try again** button appears.
@@ -133,6 +136,8 @@ You need two things: `Code.gs` (sent separately, **do not upload it to GitHub**)
 | `dashboard.html` | The teacher's results page |
 | `questions.js` | All 40 questions (no answers) |
 | `config.js` | The link to your Google Apps Script |
+| `receipt.js` | Builds each student's result sheet and PDF |
+| `vendor/` | PDF library (html2pdf.js, MIT licence). Keep this folder. |
 | `styles.css` | Page design (light and dark mode) |
 | `Code.gs` | **Not in this repo.** Paste it into the Google Sheet. It contains the answer key. |
 

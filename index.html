@@ -77,12 +77,15 @@
 
 <script src="config.js"></script>
 <script src="questions.js"></script>
+<script src="vendor/html2pdf.bundle.min.js"></script>
+<script src="receipt.js"></script>
 <script>
 (function () {
   const E = window.EXAM;
   const LETTERS = ["A", "B", "C", "D"];
   const STORE_KEY = "mnn-exam-l1-8";
   const $ = (id) => document.getElementById(id);
+  const escHTML = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   // ---- storage (works even if localStorage is blocked) ----
   let mem = null;
@@ -325,6 +328,8 @@
     if (result && result.ok) {
       state.status = "submitted";
       state.score = result.score;
+      state.review = result.review || null;
+      state.submittedAt = new Date().toISOString();
       save(state);
       showDone();
     } else {
@@ -340,9 +345,24 @@
     const hasScore = typeof state.score === "number";
     $("doneCard").innerHTML = `<div class="banner good">Your answers have been submitted.</div>
       ${hasScore ? `<p class="muted">Your score</p><div class="bigscore">${state.score} / ${E.questions.length}</div>` : ""}
-      <p style="margin-top:12px">${state.name}</p>
-      <p class="muted small">Your teacher will go through the answers in class.</p>
+      <p style="margin-top:12px">${escHTML(state.name)}</p>
+      ${state.review ? `<p><button class="btn primary" id="pdfBtn">Download my results (PDF)</button></p>
+        <p class="muted small">The PDF shows every question, your answer, and for wrong answers the correct answer with an explanation.</p>`
+        : `<p class="muted small">Your teacher will go through the answers in class.</p>`}
       <p class="small" style="margin-top:16px"><a href="#" id="newStudent">Another student using this device? Start a new exam</a></p>`;
+    if (state.review) {
+      const data = { name: state.name, submittedAt: state.submittedAt, answers: state.answers, score: state.score,
+        key: state.review.key, explain: state.review.explain, correct: state.review.correct };
+      const box = document.createElement("div");
+      box.className = "review-box";
+      box.appendChild(Receipt.build(data));
+      $("doneCard").appendChild(box);
+      $("pdfBtn").addEventListener("click", async () => {
+        const b = $("pdfBtn"); b.disabled = true; b.textContent = "Making PDF…";
+        await Receipt.download(data);
+        b.disabled = false; b.textContent = "Download my results (PDF)";
+      });
+    }
     $("newStudent").addEventListener("click", (ev) => {
       ev.preventDefault();
       try { localStorage.removeItem(STORE_KEY); } catch (e) {}
